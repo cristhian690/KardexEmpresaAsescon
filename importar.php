@@ -10,13 +10,13 @@ $dbname = 'dbasescon';
 $user   = 'root';
 $pass   = '';
 
+date_default_timezone_set('America/Lima');
+
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $user, $pass);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     die('Error de conexión: ' . $e->getMessage());
-date_default_timezone_set('America/Lima');
-
 }
 
 // ============================================================
@@ -78,7 +78,38 @@ function detectarSeparador(string $linea): string {
 }
 
 // ============================================================
+// FUNCIÓN: OBTENER ÚLTIMO SALDO DE UN CÓDIGO EN LA BD
+// Consulta el registro más reciente del código dado y devuelve
+// su saldo_cantidad y saldo_total para continuar la cadena.
+// ============================================================
+function obtenerUltimoSaldo(PDO $pdo, string $codigo): array {
+    $stmt = $pdo->prepare(
+        "SELECT saldo_cantidad, saldo_total
+         FROM kardex
+         WHERE codigo = :codigo
+         ORDER BY fecha DESC, id DESC
+         LIMIT 1"
+    );
+    $stmt->execute([':codigo' => $codigo]);
+    $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($fila) {
+        return [
+            'cantidad' => (float)$fila['saldo_cantidad'],
+            'total'    => (float)$fila['saldo_total'],
+        ];
+    }
+    return ['cantidad' => 0.0, 'total' => 0.0];
+}
+
+// ============================================================
 // FUNCIÓN: PROCESAR UN ARCHIVO CSV
+// Lógica de saldo acumulado por código:
+//   1. Lee el CODIGO de la fila
+//   2. Busca el último saldo guardado para ese código
+//   3. Nuevo Saldo Cantidad = Saldo Anterior + Entrada - Salida
+//      Nuevo Saldo Total    = Dinero Anterior + Costo Total Entrada - Costo Total Salida
+//   4. Costo Unitario promedio = Saldo Total / Saldo Cantidad
+//   5. Inserta la fila con los tres campos de saldo calculados
 // ============================================================
 function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
     $handle = fopen($tmp, 'r');
@@ -98,16 +129,15 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
     $formato = 'A';
     $handleDet = fopen($tmp, 'r');
     $bomDet = fread($handleDet, 3);
-    if ($bomDet !== "ï»¿") rewind($handleDet);
+    if ($bomDet !== "\xEF\xBB\xBF") rewind($handleDet);
     $idxDet = 0;
     while (($rowDet = fgetcsv($handleDet, 0, $sep)) !== false) {
         $idxDet++;
         if ($idxDet <= $saltar) continue;
         if (empty(array_filter(array_map('trim', $rowDet)))) continue;
-        $numCols = count($rowDet);
-        $col1    = trim($rowDet[1] ?? '');
-        // Si col[1] parece fecha DD/MM/YYYY → sin descripcion (Formato B)
-        if ($numCols <= 15 || preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/', $col1)) {
+        $col1 = trim($rowDet[1] ?? '');
+        // Si col[1] parece fecha DD/MM/YYYY o DD-MM-YYYY → sin descripcion (Formato B)
+        if (count($rowDet) <= 15 || preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/', $col1)) {
             $formato = 'B';
         }
         break;
@@ -128,6 +158,11 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
              :saldo_cantidad,:saldo_costo_u,:saldo_total)";
     $stmt = $pdo->prepare($sql);
 
+    // Cache de saldos en memoria para no ir a la BD en cada fila del mismo código.
+    // Se inicializa con el último saldo real que ya existe en la tabla,
+    // y se actualiza fila a fila conforme avanza el archivo.
+    $cacheSaldos = [];
+
     $pdo->exec("SET FOREIGN_KEY_CHECKS=0; SET UNIQUE_CHECKS=0; SET autocommit=0;");
 
     $insertados = 0; $errores = 0; $errores_det = [];
@@ -145,49 +180,88 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
         }
 
         try {
+            // --- PASO 1: Extraer campos del CSV según formato ---
             if ($formato === 'A') {
-                // 16 cols: codigo, descripcion, fecha, c_tipo, c_serie, c_num, tipo_op, 9 nums
-                $params = [
-                    ':codigo'             => limpiarTexto($col[0]  ?? '', 50),
-                    ':descripcion'        => limpiarTexto($col[1]  ?? '', 255),
-                    ':fecha'              => parsearFecha($col[2]  ?? null),
-                    ':comprobante_tipo'   => limpiarTexto($col[3]  ?? '', 20),
-                    ':comprobante_serie'  => limpiarTexto($col[4]  ?? '', 20),
-                    ':comprobante_numero' => limpiarTexto($col[5]  ?? '', 50),
-                    ':tipo_operacion'     => limpiarTexto($col[6]  ?? '', 100),
-                    ':e_cantidad'         => limpiarDecimal($col[7]  ?? 0),
-                    ':e_costo_u'          => limpiarDecimal($col[8]  ?? 0),
-                    ':e_total'            => limpiarDecimal($col[9]  ?? 0),
-                    ':s_cantidad'         => limpiarDecimal($col[10] ?? 0),
-                    ':s_costo_u'          => limpiarDecimal($col[11] ?? 0),
-                    ':s_total'            => limpiarDecimal($col[12] ?? 0),
-                    ':saldo_cantidad'     => limpiarDecimal($col[13] ?? 0),
-                    ':saldo_costo_u'      => limpiarDecimal($col[14] ?? 0),
-                    ':saldo_total'        => limpiarDecimal($col[15] ?? 0),
-                ];
+                $codigo          = limpiarTexto($col[0]  ?? '', 50);
+                $descripcion     = limpiarTexto($col[1]  ?? '', 255);
+                $fecha           = parsearFecha($col[2]  ?? null);
+                $comp_tipo       = limpiarTexto($col[3]  ?? '', 20);
+                $comp_serie      = limpiarTexto($col[4]  ?? '', 20);
+                $comp_numero     = limpiarTexto($col[5]  ?? '', 50);
+                $tipo_operacion  = limpiarTexto($col[6]  ?? '', 100);
+                $e_cantidad      = limpiarDecimal($col[7]  ?? 0);
+                $e_costo_u       = limpiarDecimal($col[8]  ?? 0);
+                $e_total         = limpiarDecimal($col[9]  ?? 0);
+                $s_cantidad      = limpiarDecimal($col[10] ?? 0);
+                $s_costo_u       = limpiarDecimal($col[11] ?? 0);
+                $s_total         = limpiarDecimal($col[12] ?? 0);
             } else {
-                // 15 cols: codigo, fecha, c_tipo, c_serie, c_num, tipo_op, 9 nums (sin descripcion)
-                $params = [
-                    ':codigo'             => limpiarTexto($col[0]  ?? '', 50),
-                    ':descripcion'        => '',
-                    ':fecha'              => parsearFecha($col[1]  ?? null),
-                    ':comprobante_tipo'   => limpiarTexto($col[2]  ?? '', 20),
-                    ':comprobante_serie'  => limpiarTexto($col[3]  ?? '', 20),
-                    ':comprobante_numero' => limpiarTexto($col[4]  ?? '', 50),
-                    ':tipo_operacion'     => limpiarTexto($col[5]  ?? '', 100),
-                    ':e_cantidad'         => limpiarDecimal($col[6]  ?? 0),
-                    ':e_costo_u'          => limpiarDecimal($col[7]  ?? 0),
-                    ':e_total'            => limpiarDecimal($col[8]  ?? 0),
-                    ':s_cantidad'         => limpiarDecimal($col[9]  ?? 0),
-                    ':s_costo_u'          => limpiarDecimal($col[10] ?? 0),
-                    ':s_total'            => limpiarDecimal($col[11] ?? 0),
-                    ':saldo_cantidad'     => limpiarDecimal($col[12] ?? 0),
-                    ':saldo_costo_u'      => limpiarDecimal($col[13] ?? 0),
-                    ':saldo_total'        => limpiarDecimal($col[14] ?? 0),
-                ];
+                // Formato B: sin columna descripcion
+                $codigo          = limpiarTexto($col[0]  ?? '', 50);
+                $descripcion     = '';
+                $fecha           = parsearFecha($col[1]  ?? null);
+                $comp_tipo       = limpiarTexto($col[2]  ?? '', 20);
+                $comp_serie      = limpiarTexto($col[3]  ?? '', 20);
+                $comp_numero     = limpiarTexto($col[4]  ?? '', 50);
+                $tipo_operacion  = limpiarTexto($col[5]  ?? '', 100);
+                $e_cantidad      = limpiarDecimal($col[6]  ?? 0);
+                $e_costo_u       = limpiarDecimal($col[7]  ?? 0);
+                $e_total         = limpiarDecimal($col[8]  ?? 0);
+                $s_cantidad      = limpiarDecimal($col[9]  ?? 0);
+                $s_costo_u       = limpiarDecimal($col[10] ?? 0);
+                $s_total         = limpiarDecimal($col[11] ?? 0);
             }
-            $stmt->execute($params);
+
+            // --- PASO 2: Buscar antecedentes del código ---
+            // Si ya lo procesamos en este archivo usamos el cache;
+            // si es la primera vez, consultamos la BD.
+            if (!isset($cacheSaldos[$codigo])) {
+                $cacheSaldos[$codigo] = obtenerUltimoSaldo($pdo, $codigo);
+            }
+            $saldo_ant_cantidad = $cacheSaldos[$codigo]['cantidad'];
+            $saldo_ant_total    = $cacheSaldos[$codigo]['total'];
+
+            // --- PASO 3: Calcular nuevo saldo ---
+            $nuevo_saldo_cantidad = $saldo_ant_cantidad + $e_cantidad - $s_cantidad;
+            $nuevo_saldo_total    = $saldo_ant_total    + $e_total    - $s_total;
+
+            // Evitar saldo negativo por redondeo flotante mínimo
+            if (abs($nuevo_saldo_cantidad) < 0.000001) $nuevo_saldo_cantidad = 0.0;
+            if (abs($nuevo_saldo_total)    < 0.000001) $nuevo_saldo_total    = 0.0;
+
+            // --- PASO 4: Calcular costo unitario promedio ---
+            if ($nuevo_saldo_cantidad > 0) {
+                $nuevo_saldo_costo_u = round($nuevo_saldo_total / $nuevo_saldo_cantidad, 6);
+            } else {
+                $nuevo_saldo_costo_u = 0.0;
+            }
+
+            // --- PASO 5: Insertar con saldos calculados ---
+            $stmt->execute([
+                ':codigo'             => $codigo,
+                ':descripcion'        => $descripcion,
+                ':fecha'              => $fecha,
+                ':comprobante_tipo'   => $comp_tipo,
+                ':comprobante_serie'  => $comp_serie,
+                ':comprobante_numero' => $comp_numero,
+                ':tipo_operacion'     => $tipo_operacion,
+                ':e_cantidad'         => $e_cantidad,
+                ':e_costo_u'          => $e_costo_u,
+                ':e_total'            => $e_total,
+                ':s_cantidad'         => $s_cantidad,
+                ':s_costo_u'          => $s_costo_u,
+                ':s_total'            => $s_total,
+                ':saldo_cantidad'     => round($nuevo_saldo_cantidad, 6),
+                ':saldo_costo_u'      => $nuevo_saldo_costo_u,
+                ':saldo_total'        => round($nuevo_saldo_total, 6),
+            ]);
+
+            // Actualizar cache para la siguiente fila de este mismo código
+            $cacheSaldos[$codigo]['cantidad'] = $nuevo_saldo_cantidad;
+            $cacheSaldos[$codigo]['total']    = $nuevo_saldo_total;
+
             $insertados++;
+
         } catch (PDOException $e) {
             $errores++;
             if (count($errores_det) < 3) $errores_det[] = "Fila $idx: " . $e->getMessage();

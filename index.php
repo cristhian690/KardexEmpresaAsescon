@@ -851,45 +851,7 @@ $stats = $statsQ->fetch(PDO::FETCH_ASSOC);
       </table>
     </div>
 
-    <!-- CARDS MÓVIL -->
-    <div style="padding:8px;" id="mobileCards">
-    <?php if (empty($registros)): ?>
-      <div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">Sin resultados.</div></div>
-    <?php else: ?>
-      <?php foreach ($registros as $i => $r):
-        $fecha_fmt = $r['fecha'] ? date('d/m/Y', strtotime($r['fecha'])) : '—';
-        $op  = strtolower($r['tipo_operacion'] ?? '');
-        $cls = str_contains($op,'venta')||str_contains($op,'salida') ? 'badge-salida'
-             : (str_contains($op,'entrada')||str_contains($op,'compra') ? 'badge-entrada' : 'badge-saldo');
-      ?>
-      <div class="mobile-card">
-        <div class="mc-header">
-          <span class="mc-codigo"><?= htmlspecialchars($r['codigo']) ?></span>
-          <span class="mc-fecha"><?= $fecha_fmt ?></span>
-        </div>
-        <div class="mc-desc"><?= htmlspecialchars($r['descripcion']) ?></div>
-        <div class="mc-badge"><span class="badge <?= $cls ?>"><?= htmlspecialchars($r['tipo_operacion'] ?? '—') ?></span></div>
-        <?php if (!empty($r['comprobante_serie'])): ?>
-        <div class="mc-comprobante"><?= htmlspecialchars($r['comprobante_tipo']??'') ?> · <?= htmlspecialchars($r['comprobante_serie']??'') ?> · <?= htmlspecialchars($r['comprobante_numero']??'') ?></div>
-        <?php endif; ?>
-        <div class="mc-nums">
-          <div class="mc-num">
-            <div class="mc-num-label">Entrada</div>
-            <div class="mc-num-val td-entrada <?= $r['e_cantidad']==0?'zero':'' ?>"><?= number_format($r['e_cantidad'],3) ?></div>
-          </div>
-          <div class="mc-num">
-            <div class="mc-num-label">Salida</div>
-            <div class="mc-num-val td-salida <?= $r['s_cantidad']==0?'zero':'' ?>"><?= number_format($r['s_cantidad'],3) ?></div>
-          </div>
-          <div class="mc-num">
-            <div class="mc-num-label">Saldo</div>
-            <div class="mc-num-val td-saldo"><?= number_format($r['saldo_cantidad'],3) ?></div>
-          </div>
-        </div>
-      </div>
-      <?php endforeach; ?>
-    <?php endif; ?>
-    </div>
+    
 
     <!-- PAGINACIÓN -->
     <?php if ($totalPages > 1): ?>
