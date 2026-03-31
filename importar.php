@@ -2,15 +2,13 @@
 set_time_limit(0);
 ini_set('memory_limit', '512M');
 
-// ============================================================
-// CONFIGURACIÓN DE BASE DE DATOS
-// ============================================================
+
+date_default_timezone_set('America/Lima'); 
+
 $host   = 'localhost';
 $dbname = 'dbasescon';
 $user   = 'root';
 $pass   = '';
-
-date_default_timezone_set('America/Lima');
 
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $user, $pass);
@@ -19,9 +17,7 @@ try {
     die('Error de conexión: ' . $e->getMessage());
 }
 
-// ============================================================
-// FUNCIÓN LOG DE ACTIVIDAD
-// ============================================================
+
 function registrarLog(PDO $pdo, string $accion, string $descripcion, string $detalle = '', int $registros = 0): void {
     try {
         $pdo->prepare("INSERT INTO kardex_log (accion, descripcion, detalle, registros) VALUES (?,?,?,?)")
@@ -29,12 +25,11 @@ function registrarLog(PDO $pdo, string $accion, string $descripcion, string $det
     } catch (Exception $e) { /* silencioso */ }
 }
 
-// ============================================================
-// FUNCIONES HELPERS
-// ============================================================
+
 function parsearFecha($valor) {
     if ($valor === null || $valor === '') return null;
     $valor = trim((string)$valor);
+   
     if (is_numeric($valor) && (int)$valor > 1000 && (int)$valor < 100000) {
         $fecha = gmdate('Y-m-d', ((int)$valor - 25569) * 86400);
         if ($fecha && $fecha !== '1970-01-01') return $fecha;
@@ -56,12 +51,10 @@ function parsearFecha($valor) {
 function limpiarDecimal($v): float {
     if ($v === null || $v === '') return 0.0;
     $v = trim(str_replace(' ', '', (string)$v));
-    // Si tiene punto: la coma es separador de miles (formato anglosajón: 125,067.568)
     if (strpos($v, '.') !== false) {
-        $v = str_replace(',', '', $v);
+        $v = str_replace(',', '', $v);   
     } else {
-        // Si solo tiene coma: es decimal europeo (125,568 → 125.568)
-        $v = str_replace(['.', ','], ['', '.'], $v);
+        $v = str_replace(['.', ','], ['', '.'], $v); 
     }
     return is_numeric($v) ? (float)$v : 0.0;
 }
@@ -77,12 +70,8 @@ function detectarSeparador(string $linea): string {
     return array_key_first($sep);
 }
 
-// ============================================================
-// FUNCIÓN: OBTENER ÚLTIMO SALDO DE UN CÓDIGO EN LA BD
-// Consulta el registro más reciente del código dado y devuelve
-// su saldo_cantidad y saldo_total para continuar la cadena.
-// ============================================================
 function obtenerUltimoSaldo(PDO $pdo, string $codigo): array {
+ 
     $stmt = $pdo->prepare(
         "SELECT saldo_cantidad, saldo_total
          FROM kardex
@@ -93,27 +82,15 @@ function obtenerUltimoSaldo(PDO $pdo, string $codigo): array {
     $stmt->execute([':codigo' => $codigo]);
     $fila = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($fila) {
-        return [
-            'cantidad' => (float)$fila['saldo_cantidad'],
-            'total'    => (float)$fila['saldo_total'],
-        ];
+        return ['cantidad' => (float)$fila['saldo_cantidad'], 'total' => (float)$fila['saldo_total']];
     }
     return ['cantidad' => 0.0, 'total' => 0.0];
 }
 
-// ============================================================
-// FUNCIÓN: PROCESAR UN ARCHIVO CSV
-// Lógica de saldo acumulado por código:
-//   1. Lee el CODIGO de la fila
-//   2. Busca el último saldo guardado para ese código
-//   3. Nuevo Saldo Cantidad = Saldo Anterior + Entrada - Salida
-//      Nuevo Saldo Total    = Dinero Anterior + Costo Total Entrada - Costo Total Salida
-//   4. Costo Unitario promedio = Saldo Total / Saldo Cantidad
-//   5. Inserta la fila con los tres campos de saldo calculados
-// ============================================================
+
 function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
     $handle = fopen($tmp, 'r');
-    // Saltar BOM UTF-8
+  
     $bom = fread($handle, 3);
     if ($bom !== "\xEF\xBB\xBF") rewind($handle);
 
@@ -123,12 +100,10 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
 
     $sep = detectarSeparador($primeraLinea);
 
-    // Detectar formato leyendo primera fila de datos
-    // Formato A (16 cols): codigo, descripcion, fecha, ...
-    // Formato B (15 cols): codigo, fecha, ... (sin descripcion)
-    $formato = 'A';
+    // Detectar formato (con/sin columna descripción)
+    $formato  = 'A';
     $handleDet = fopen($tmp, 'r');
-    $bomDet = fread($handleDet, 3);
+    $bomDet    = fread($handleDet, 3);
     if ($bomDet !== "\xEF\xBB\xBF") rewind($handleDet);
     $idxDet = 0;
     while (($rowDet = fgetcsv($handleDet, 0, $sep)) !== false) {
@@ -136,7 +111,6 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
         if ($idxDet <= $saltar) continue;
         if (empty(array_filter(array_map('trim', $rowDet)))) continue;
         $col1 = trim($rowDet[1] ?? '');
-        // Si col[1] parece fecha DD/MM/YYYY o DD-MM-YYYY → sin descripcion (Formato B)
         if (count($rowDet) <= 15 || preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/', $col1)) {
             $formato = 'B';
         }
@@ -144,123 +118,122 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
     }
     fclose($handleDet);
 
-    $sql = "INSERT INTO kardex
-            (codigo, descripcion, fecha, comprobante_tipo, comprobante_serie,
-             comprobante_numero, tipo_operacion,
-             e_cantidad, e_costo_u, e_total,
-             s_cantidad, s_costo_u, s_total,
-             saldo_cantidad, saldo_costo_u, saldo_total)
-            VALUES
-            (:codigo,:descripcion,:fecha,:comprobante_tipo,:comprobante_serie,
-             :comprobante_numero,:tipo_operacion,
-             :e_cantidad,:e_costo_u,:e_total,
-             :s_cantidad,:s_costo_u,:s_total,
-             :saldo_cantidad,:saldo_costo_u,:saldo_total)";
-    $stmt = $pdo->prepare($sql);
-
-    // Cache de saldos en memoria para no ir a la BD en cada fila del mismo código.
-    // Se inicializa con el último saldo real que ya existe en la tabla,
-    // y se actualiza fila a fila conforme avanza el archivo.
-    $cacheSaldos = [];
+    // Columnas a insertar (16 campos)
+    $COLS = "(codigo, descripcion, fecha, comprobante_tipo, comprobante_serie,
+              comprobante_numero, tipo_operacion,
+              e_cantidad, e_costo_u, e_total,
+              s_cantidad, s_costo_u, s_total,
+              saldo_cantidad, saldo_costo_u, saldo_total)";
+    $BATCH_SIZE = 500; 
+    $cacheSaldos = []; 
+    $batchRows   = []; 
+    $batchParams = []; 
 
     $pdo->exec("SET FOREIGN_KEY_CHECKS=0; SET UNIQUE_CHECKS=0; SET autocommit=0;");
+    $pdo->beginTransaction();
 
     $insertados = 0; $errores = 0; $errores_det = [];
-    $idx = 0; $en_tx = false; $LOTE = 500;
+    $idx = 0;
+
+    // ── Función auxiliar: vaciar el batch acumulado ─────────
+    $flushBatch = function() use (&$batchRows, &$batchParams, &$insertados, $pdo, $COLS) {
+        if (empty($batchRows)) return;
+        
+        $placeholders = implode(',', $batchRows); 
+        $sql = "INSERT INTO kardex $COLS VALUES $placeholders";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($batchParams);
+        $insertados += count($batchRows);
+        $batchRows   = [];
+        $batchParams = [];
+    };
 
     while (($col = fgetcsv($handle, 0, $sep)) !== false) {
         $idx++;
         if ($idx <= $saltar) continue;
         if (empty(array_filter(array_map('trim', $col)))) continue;
 
-        if ($insertados % $LOTE === 0) {
-            if ($en_tx) $pdo->commit();
-            $pdo->beginTransaction();
-            $en_tx = true;
-        }
-
         try {
-            // --- PASO 1: Extraer campos del CSV según formato ---
+            // ── Extraer campos según formato ────────────────
             if ($formato === 'A') {
-                $codigo          = limpiarTexto($col[0]  ?? '', 50);
-                $descripcion     = limpiarTexto($col[1]  ?? '', 255);
-                $fecha           = parsearFecha($col[2]  ?? null);
-                $comp_tipo       = limpiarTexto($col[3]  ?? '', 20);
-                $comp_serie      = limpiarTexto($col[4]  ?? '', 20);
-                $comp_numero     = limpiarTexto($col[5]  ?? '', 50);
-                $tipo_operacion  = limpiarTexto($col[6]  ?? '', 100);
-                $e_cantidad      = limpiarDecimal($col[7]  ?? 0);
-                $e_costo_u       = limpiarDecimal($col[8]  ?? 0);
-                $e_total         = limpiarDecimal($col[9]  ?? 0);
-                $s_cantidad      = limpiarDecimal($col[10] ?? 0);
-                $s_costo_u       = limpiarDecimal($col[11] ?? 0);
-                $s_total         = limpiarDecimal($col[12] ?? 0);
+                $codigo         = limpiarTexto($col[0]  ?? '', 50);
+                $descripcion    = limpiarTexto($col[1]  ?? '', 255);
+                $fecha          = parsearFecha($col[2]  ?? null);
+                $comp_tipo      = limpiarTexto($col[3]  ?? '', 20);
+                $comp_serie     = limpiarTexto($col[4]  ?? '', 20);
+                $comp_numero    = limpiarTexto($col[5]  ?? '', 50);
+                $tipo_operacion = limpiarTexto($col[6]  ?? '', 100);
+                $e_cantidad     = limpiarDecimal($col[7]  ?? 0);
+                $e_costo_u      = limpiarDecimal($col[8]  ?? 0);
+                $e_total        = limpiarDecimal($col[9]  ?? 0);
+                $s_cantidad     = limpiarDecimal($col[10] ?? 0);
+                $s_costo_u      = limpiarDecimal($col[11] ?? 0);
+                $s_total        = limpiarDecimal($col[12] ?? 0);
             } else {
-                // Formato B: sin columna descripcion
-                $codigo          = limpiarTexto($col[0]  ?? '', 50);
-                $descripcion     = '';
-                $fecha           = parsearFecha($col[1]  ?? null);
-                $comp_tipo       = limpiarTexto($col[2]  ?? '', 20);
-                $comp_serie      = limpiarTexto($col[3]  ?? '', 20);
-                $comp_numero     = limpiarTexto($col[4]  ?? '', 50);
-                $tipo_operacion  = limpiarTexto($col[5]  ?? '', 100);
-                $e_cantidad      = limpiarDecimal($col[6]  ?? 0);
-                $e_costo_u       = limpiarDecimal($col[7]  ?? 0);
-                $e_total         = limpiarDecimal($col[8]  ?? 0);
-                $s_cantidad      = limpiarDecimal($col[9]  ?? 0);
-                $s_costo_u       = limpiarDecimal($col[10] ?? 0);
-                $s_total         = limpiarDecimal($col[11] ?? 0);
+                $codigo         = limpiarTexto($col[0]  ?? '', 50);
+                $descripcion    = '';
+                $fecha          = parsearFecha($col[1]  ?? null);
+                $comp_tipo      = limpiarTexto($col[2]  ?? '', 20);
+                $comp_serie     = limpiarTexto($col[3]  ?? '', 20);
+                $comp_numero    = limpiarTexto($col[4]  ?? '', 50);
+                $tipo_operacion = limpiarTexto($col[5]  ?? '', 100);
+                $e_cantidad     = limpiarDecimal($col[6]  ?? 0);
+                $e_costo_u      = limpiarDecimal($col[7]  ?? 0);
+                $e_total        = limpiarDecimal($col[8]  ?? 0);
+                $s_cantidad     = limpiarDecimal($col[9]  ?? 0);
+                $s_costo_u      = limpiarDecimal($col[10] ?? 0);
+                $s_total        = limpiarDecimal($col[11] ?? 0);
             }
 
-            // --- PASO 2: Buscar antecedentes del código ---
-            // Si ya lo procesamos en este archivo usamos el cache;
-            // si es la primera vez, consultamos la BD.
+            
+            //  CORRECCIÓN: el saldo es arrastre, no suma de todos
             if (!isset($cacheSaldos[$codigo])) {
                 $cacheSaldos[$codigo] = obtenerUltimoSaldo($pdo, $codigo);
             }
             $saldo_ant_cantidad = $cacheSaldos[$codigo]['cantidad'];
             $saldo_ant_total    = $cacheSaldos[$codigo]['total'];
 
-            // --- PASO 3: Calcular nuevo saldo ---
             $nuevo_saldo_cantidad = $saldo_ant_cantidad + $e_cantidad - $s_cantidad;
             $nuevo_saldo_total    = $saldo_ant_total    + $e_total    - $s_total;
 
-            // Evitar saldo negativo por redondeo flotante mínimo
             if (abs($nuevo_saldo_cantidad) < 0.000001) $nuevo_saldo_cantidad = 0.0;
             if (abs($nuevo_saldo_total)    < 0.000001) $nuevo_saldo_total    = 0.0;
 
-            // --- PASO 4: Calcular costo unitario promedio ---
-            if ($nuevo_saldo_cantidad > 0) {
-                $nuevo_saldo_costo_u = round($nuevo_saldo_total / $nuevo_saldo_cantidad, 6);
-            } else {
-                $nuevo_saldo_costo_u = 0.0;
-            }
+            $nuevo_saldo_costo_u = ($nuevo_saldo_cantidad > 0)
+                ? round($nuevo_saldo_total / $nuevo_saldo_cantidad, 6)
+                : 0.0;
 
-            // --- PASO 5: Insertar con saldos calculados ---
-            $stmt->execute([
-                ':codigo'             => $codigo,
-                ':descripcion'        => $descripcion,
-                ':fecha'              => $fecha,
-                ':comprobante_tipo'   => $comp_tipo,
-                ':comprobante_serie'  => $comp_serie,
-                ':comprobante_numero' => $comp_numero,
-                ':tipo_operacion'     => $tipo_operacion,
-                ':e_cantidad'         => $e_cantidad,
-                ':e_costo_u'          => $e_costo_u,
-                ':e_total'            => $e_total,
-                ':s_cantidad'         => $s_cantidad,
-                ':s_costo_u'          => $s_costo_u,
-                ':s_total'            => $s_total,
-                ':saldo_cantidad'     => round($nuevo_saldo_cantidad, 6),
-                ':saldo_costo_u'      => $nuevo_saldo_costo_u,
-                ':saldo_total'        => round($nuevo_saldo_total, 6),
-            ]);
-
-            // Actualizar cache para la siguiente fila de este mismo código
+            // Actualizar cache
             $cacheSaldos[$codigo]['cantidad'] = $nuevo_saldo_cantidad;
             $cacheSaldos[$codigo]['total']    = $nuevo_saldo_total;
 
-            $insertados++;
+            
+            $batchRows[]   = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
+            $batchParams = array_merge($batchParams, [
+                $codigo,
+                $descripcion,
+                $fecha,
+                $comp_tipo,
+                $comp_serie,
+                $comp_numero,
+                $tipo_operacion,
+                $e_cantidad,
+                $e_costo_u,
+                $e_total,
+                $s_cantidad,
+                $s_costo_u,
+                $s_total,
+                round($nuevo_saldo_cantidad, 6),
+                $nuevo_saldo_costo_u,
+                round($nuevo_saldo_total, 6),
+            ]);
+
+            // Vaciar batch cuando llega al límite
+            if (count($batchRows) >= $BATCH_SIZE) {
+                $flushBatch();
+                $pdo->commit();
+                $pdo->beginTransaction();
+            }
 
         } catch (PDOException $e) {
             $errores++;
@@ -268,7 +241,9 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
         }
     }
 
-    if ($en_tx) $pdo->commit();
+    //Insertar el último batch (si quedaron filas) 
+    $flushBatch();
+    $pdo->commit();
     fclose($handle);
 
     $pdo->exec("SET FOREIGN_KEY_CHECKS=1; SET UNIQUE_CHECKS=1; SET autocommit=1;");
@@ -276,9 +251,7 @@ function procesarCSV(string $tmp, int $saltar, PDO $pdo): array {
     return ['insertados' => $insertados, 'errores' => $errores, 'errores_det' => $errores_det, 'formato' => $formato];
 }
 
-// ============================================================
 // PROCESAMIENTO POST — MÚLTIPLES ARCHIVOS
-// ============================================================
 $resultados = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivos'])) {
@@ -286,7 +259,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivos'])) {
     $accion   = $_POST['accion']       ?? 'agregar';
     $saltar   = max(0, (int)($_POST['filas_saltar'] ?? 2));
 
-    // Reorganizar array de múltiples archivos
     $lista = [];
     for ($i = 0; $i < count($archivos['name']); $i++) {
         if ($archivos['error'][$i] === UPLOAD_ERR_OK) {
@@ -302,7 +274,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivos'])) {
     if (empty($lista)) {
         $resultados = [['ok' => false, 'archivo' => '—', 'msg' => 'No se recibió ningún archivo válido.']];
     } else {
-        // Si es "reemplazar", borrar UNA sola vez antes de procesar
         if ($accion === 'reemplazar') {
             $pdo->exec("TRUNCATE TABLE kardex");
         }
@@ -310,20 +281,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivos'])) {
         $resultados = [];
         foreach ($lista as $f) {
             if (!in_array($f['ext'], ['csv'])) {
-                $resultados[] = [
-                    'ok'      => false,
-                    'archivo' => $f['nombre'],
-                    'msg'     => 'Solo se aceptan archivos .csv — guarda tu Excel como CSV UTF-8.',
-                ];
+                $resultados[] = ['ok' => false, 'archivo' => $f['nombre'], 'msg' => 'Solo se aceptan archivos .csv — guarda tu Excel como CSV UTF-8.'];
                 continue;
             }
 
             $r = procesarCSV($f['tmp'], $saltar, $pdo);
-            registrarLog($pdo, 'IMPORTAR',
-                "Importó archivo: {$f['nombre']}",
-                "{$r['insertados']} registros insertados" . ($r['errores'] > 0 ? ", {$r['errores']} errores" : ''),
-                $r['insertados']
-            );
+
+          
+            if ($r['insertados'] > 0) {
+                registrarLog($pdo, 'IMPORTAR',
+                    "Importó archivo: {$f['nombre']}",
+                    "{$r['insertados']} registros insertados" . ($r['errores'] > 0 ? ", {$r['errores']} errores" : ''),
+                    $r['insertados']
+                );
+            }
+
             $resultados[] = [
                 'ok'          => true,
                 'archivo'     => $f['nombre'],
@@ -337,7 +309,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivos'])) {
     }
 }
 
-// Stats actuales de la BD
 $statsDB = $pdo->query("SELECT COUNT(*) as total, COUNT(DISTINCT codigo) as productos FROM kardex")->fetch(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -353,28 +324,24 @@ $statsDB = $pdo->query("SELECT COUNT(*) as total, COUNT(DISTINCT codigo) as prod
 body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;font-size:14px;min-height:100vh;}
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 20% 10%,rgba(79,158,255,.06) 0%,transparent 60%);pointer-events:none;z-index:0;}
 .wrapper{position:relative;z-index:1;max-width:860px;margin:0 auto;padding:40px 20px;}
-
 .back-link{display:inline-flex;align-items:center;gap:8px;color:var(--text2);text-decoration:none;font-size:13px;margin-bottom:28px;transition:color .15s;}
 .back-link:hover{color:var(--accent);}
 .page-title{font-size:28px;font-weight:800;margin-bottom:6px;}
 .page-sub{color:var(--text2);font-size:13px;margin-bottom:24px;}
-
-/* Stats BD */
 .db-stats{display:flex;gap:14px;margin-bottom:24px;}
 .db-stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 20px;flex:1;text-align:center;}
 .db-stat-v{font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent);}
 .db-stat-l{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:3px;}
-
-/* Tip */
 .tip-box{background:rgba(0,229,176,.07);border:1px solid rgba(0,229,176,.2);border-left:4px solid var(--accent3);border-radius:var(--radius);padding:14px 18px;margin-bottom:24px;font-size:13px;line-height:1.6;}
 .tip-box strong{color:var(--accent3);}
 .tip-steps{margin-top:6px;padding-left:18px;color:var(--text2);}
 .tip-steps li{margin:2px 0;}
 
+
+.perf-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(79,158,255,.1);border:1px solid rgba(79,158,255,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:20px;}
+
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:28px;margin-bottom:20px;}
 .card-title{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:18px;}
-
-/* Drop Zone múltiple */
 .drop-zone{border:2px dashed var(--border2);border-radius:var(--radius);padding:44px 24px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;}
 .drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:rgba(79,158,255,.04);}
 .drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
@@ -382,8 +349,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .drop-main{font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;}
 .drop-sub{font-size:12px;color:var(--text3);}
 .multi-badge{display:inline-block;margin-top:10px;padding:3px 12px;border-radius:20px;background:rgba(79,158,255,.15);color:var(--accent);font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;}
-
-/* Lista de archivos seleccionados */
 .file-list{margin-top:16px;display:none;}
 .file-list-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;}
 .file-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius2);margin-bottom:6px;}
@@ -391,27 +356,20 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .file-item-name{font-size:12px;color:var(--text);font-family:'JetBrains Mono',monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .file-item-size{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
 .file-count{display:inline-block;margin-top:4px;font-size:12px;color:var(--accent);font-family:'JetBrains Mono',monospace;}
-
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px;}
 .form-group{display:flex;flex-direction:column;gap:6px;}
 .form-group label{font-size:12px;color:var(--text2);}
 .form-group input,.form-group select{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;padding:9px 12px;outline:none;transition:border-color .15s;}
 .form-group input:focus,.form-group select:focus{border-color:var(--accent);}
 .form-group .hint{font-size:11px;color:var(--text3);}
-
-/* Advertencia reemplazar */
 .warn-replace{display:none;background:rgba(255,77,106,.08);border:1px solid rgba(255,77,106,.2);border-radius:var(--radius2);padding:10px 14px;font-size:12px;color:var(--danger);margin-top:8px;}
-
 .col-map{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:7px;margin-top:12px;}
 .col-item{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius2);padding:8px 12px;display:flex;align-items:center;gap:9px;}
 .col-num{width:22px;height:22px;border-radius:4px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .col-name{font-size:11px;color:var(--text2);}
-
 .btn-submit{width:100%;padding:14px;border:none;border-radius:var(--radius2);background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-family:'Syne',sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:all .18s;margin-top:24px;box-shadow:0 2px 16px rgba(79,158,255,.3);}
 .btn-submit:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(79,158,255,.5);}
 .btn-submit:disabled{opacity:.5;cursor:not-allowed;transform:none;}
-
-/* Resultados múltiples */
 .results-wrap{margin-bottom:24px;}
 .results-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text);}
 .result-item{border-radius:var(--radius);padding:16px 20px;margin-bottom:10px;display:flex;align-items:flex-start;gap:14px;}
@@ -427,7 +385,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .result-stat strong{color:var(--text);}
 .result-msg{font-size:12px;color:var(--text2);margin-top:4px;}
 .err-det{font-size:11px;color:var(--danger);margin-top:4px;font-family:'JetBrains Mono',monospace;}
-
 .results-summary{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;}
 .summary-total{font-size:15px;font-weight:700;}
 .summary-total span{color:var(--accent3);}
@@ -435,17 +392,12 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .btn-volver:hover{background:var(--border);color:var(--text);}
 .btn-nuevo{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:var(--radius2);background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;text-decoration:none;font-size:13px;font-weight:600;transition:all .15s;}
 .btn-nuevo:hover{transform:translateY(-1px);}
-
-/* Progress */
 .progress-wrap{display:none;margin-top:16px;}
 .progress-bar{height:5px;background:var(--border2);border-radius:3px;overflow:hidden;}
 .progress-fill{height:100%;width:60%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent3));animation:pg 1.5s ease-in-out infinite;}
 @keyframes pg{0%{transform:translateX(-100%);}100%{transform:translateX(200%);}}
 .progress-text{font-size:12px;color:var(--text3);margin-top:8px;font-family:'JetBrains Mono',monospace;}
-
-@media(max-width:600px){.form-row{grid-template-columns:1fr;}.db-stats{flex-direction:column;}
-  .wrapper{padding:20px 12px 80px;}
-}
+@media(max-width:600px){.form-row{grid-template-columns:1fr;}.db-stats{flex-direction:column;}.wrapper{padding:20px 12px 80px;}}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#111318;border-top:1px solid #232731;z-index:100;padding:8px 0;}
 .bottom-nav-inner{display:flex;justify-content:space-around;}
 .nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;text-decoration:none;opacity:.5;padding:4px 12px;}
@@ -459,10 +411,10 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 <body>
 <div class="wrapper">
   <a href="index.php" class="back-link">← Volver al Kardex</a>
-  <div class="page-title">⬆ Importar archivos</div>
+  <div class="page-title">Importar archivos</div>
   <div class="page-sub">Sube uno o varios CSV a la vez — todos los productos en una sola operación</div>
 
-  <!-- STATS BD ACTUAL -->
+
   <div class="db-stats">
     <div class="db-stat">
       <div class="db-stat-v"><?= number_format($statsDB['total']) ?></div>
@@ -474,9 +426,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     </div>
   </div>
 
-  <!-- TIP CSV -->
   <div class="tip-box">
-    <strong>💡 Cómo exportar de Excel a CSV:</strong>
+    <strong>Cómo exportar de Excel a CSV:</strong>
     <ol class="tip-steps">
       <li>Abre tu archivo en Excel → <b>Archivo → Guardar como</b></li>
       <li>Tipo: <b>CSV UTF-8 (delimitado por comas)</b> → Guardar</li>
@@ -484,7 +435,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     </ol>
   </div>
 
-  <!-- RESULTADOS -->
   <?php if ($resultados !== null): ?>
     <?php
       $total_insertados = array_sum(array_column(array_filter($resultados, fn($r) => $r['ok']), 'insertados'));
@@ -501,7 +451,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
         <a href="index.php" class="btn-volver">📦 Ver Kardex →</a>
       </div>
     </div>
-
     <div class="results-wrap">
       <div class="results-title">Detalle por archivo:</div>
       <?php foreach ($resultados as $r): ?>
@@ -528,12 +477,9 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
         </div>
       <?php endforeach; ?>
     </div>
-
   <?php else: ?>
 
-  <!-- FORMULARIO -->
   <form method="POST" enctype="multipart/form-data" id="importForm">
-
     <div class="card">
       <div class="card-title">01 · Seleccionar archivos CSV</div>
       <div class="drop-zone" id="dropZone">
@@ -541,9 +487,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
         <div class="drop-icon">📂</div>
         <div class="drop-main">Arrastra uno o varios archivos CSV aquí</div>
         <div class="drop-sub">o haz clic para seleccionar</div>
-        <div class="multi-badge">✦ SELECCIÓN MÚLTIPLE ACTIVADA</div>
+        <div class="multi-badge">SELECCIÓN MÚLTIPLE ACTIVADA</div>
       </div>
-      <!-- Lista de archivos seleccionados -->
       <div class="file-list" id="fileList">
         <div class="file-list-title">Archivos seleccionados:</div>
         <div id="fileItems"></div>
@@ -586,7 +531,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
       <div class="progress-bar"><div class="progress-fill"></div></div>
       <div class="progress-text" id="progressText">Procesando archivos, por favor espera…</div>
     </div>
-
     <button type="submit" class="btn-submit" id="btnSubmit">⬆ Importar archivos</button>
   </form>
 
@@ -595,10 +539,10 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
-    <a href="index.php" class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
+    <a href="index.php"   class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
     <a href="importar.php" class="nav-item active"><span class="nav-icon">⬆</span><span class="nav-label">Importar</span></a>
-    <a href="reporte.php" class="nav-item"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
-    <a href="log.php" class="nav-item"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
+    <a href="reporte.php"  class="nav-item"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
+    <a href="log.php"      class="nav-item"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
   </div>
 </nav>
 
@@ -627,8 +571,7 @@ function mostrarArchivos(files) {
 }
 
 fi.addEventListener('change', () => { if (fi.files.length) mostrarArchivos(fi.files); });
-
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('dragover'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
 dz.addEventListener('drop', e => {
   e.preventDefault(); dz.classList.remove('dragover');
@@ -638,19 +581,17 @@ dz.addEventListener('drop', e => {
   if (fi.files.length) mostrarArchivos(fi.files);
 });
 
-// Advertencia reemplazar
 document.getElementById('accionSelect').addEventListener('change', function() {
   document.getElementById('warnReplace').style.display = this.value === 'reemplazar' ? 'block' : 'none';
 });
 
-// Progress al enviar
 document.getElementById('importForm')?.addEventListener('submit', function() {
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('btnSubmit').disabled = true;
   const msgs = [
     'Leyendo archivos CSV…',
-    'Insertando registros en la base de datos…',
-    'Procesando lotes de 500 filas…',
+    'Insertando en lotes de 500 filas (Batch Insert)…',
+    'Calculando saldos acumulados…',
     'Casi listo, no cierres esta página…',
   ];
   let mi = 0;

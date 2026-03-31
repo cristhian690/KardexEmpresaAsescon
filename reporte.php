@@ -1,7 +1,7 @@
 <?php
-// ============================================================
-// CONFIGURACIÓN DE BASE DE DATOS
-// ============================================================
+
+date_default_timezone_set('America/Lima'); 
+
 $host   = 'localhost';
 $dbname = 'dbasescon';
 $user   = 'root';
@@ -14,16 +14,20 @@ try {
     die('Error de conexión: ' . $e->getMessage());
 }
 
-// Zona horaria Perú (UTC-5)
-date_default_timezone_set('America/Lima');
 
-// ============================================================
-// PARÁMETROS DE FILTRO
-// ============================================================
+function registrarLog(PDO $pdo, string $accion, string $descripcion, string $detalle = '', int $registros = 0): void {
+    try {
+        $pdo->prepare("INSERT INTO kardex_log (accion, descripcion, detalle, registros) VALUES (?,?,?,?)")
+            ->execute([$accion, $descripcion, $detalle, $registros]);
+    } catch (Exception $e) {}
+}
+
+
 $search_codigo    = trim($_GET['codigo']    ?? '');
 $search_fecha_ini = trim($_GET['fecha_ini'] ?? '');
 $search_fecha_fin = trim($_GET['fecha_fin'] ?? '');
 $export           = $_GET['export'] ?? '';
+
 
 $where  = [];
 $params = [];
@@ -40,27 +44,16 @@ if ($search_fecha_fin !== '') {
     $params[':fecha_fin'] = $search_fecha_fin;
 }
 $whereSQL = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+// Ordenar por código y fecha para que el saldo arrastre correctamente
 $stmt = $pdo->prepare("SELECT * FROM kardex $whereSQL ORDER BY codigo ASC, fecha ASC, id ASC");
 $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// ============================================================
-// FUNCIÓN LOG
-// ============================================================
-function registrarLog(PDO $pdo, string $accion, string $descripcion, string $detalle = '', int $registros = 0): void {
-    try {
-        $pdo->prepare("INSERT INTO kardex_log (accion, descripcion, detalle, registros) VALUES (?,?,?,?)")
-            ->execute([$accion, $descripcion, $detalle, $registros]);
-    } catch (Exception $e) {}
-}
 
-// ============================================================
-// EXPORTAR XLSX
-// ============================================================
 if ($export === 'excel') {
     if (empty($registros)) { die("No hay datos para exportar."); }
 
-    // ── Helpers ───────────────────────────────────────────
     function colLetter(int $n): string {
         $s = '';
         while ($n > 0) { $n--; $s = chr(65 + ($n % 26)) . $s; $n = (int)($n / 26); }
@@ -70,9 +63,7 @@ if ($export === 'excel') {
         return htmlspecialchars($v, ENT_XML1 | ENT_QUOTES, 'UTF-8');
     }
 
-    // ── Definición de columnas ─────────────────────────────
     $colDefs = [
-        // [grupo, encabezado, tipo, ancho]
         ['',            '#',                 'n', 5 ],
         ['',            'Código',            's', 13],
         ['',            'Descripción',       's', 35],
@@ -92,19 +83,13 @@ if ($export === 'excel') {
         ['SALDO FINAL', 'Saldo Total',       'n', 16],
     ];
 
-    // ── Shared Strings ─────────────────────────────────────
     $sstMap = []; $sstArr = [];
     $si = function(string $v) use (&$sstMap, &$sstArr): int {
-        if (!array_key_exists($v, $sstMap)) {
-            $sstMap[$v] = count($sstArr);
-            $sstArr[]   = $v;
-        }
+        if (!array_key_exists($v, $sstMap)) { $sstMap[$v] = count($sstArr); $sstArr[] = $v; }
         return $sstMap[$v];
     };
-    // Pre-cargar cabeceras
     foreach ($colDefs as $cd) { $si($cd[0]); $si($cd[1]); }
     $si('TOTALES'); $si('');
-    // Pre-cargar textos de datos
     foreach ($registros as $r) {
         $si((string)($r['codigo']             ?? ''));
         $si((string)($r['descripcion']        ?? ''));
@@ -115,17 +100,9 @@ if ($export === 'excel') {
         $si((string)($r['tipo_operacion']     ?? ''));
     }
 
-    // ── Estilos ────────────────────────────────────────────
-    // s="0" texto normal con borde
-    // s="1" cabecera: negrita blanca, fondo azul oscuro, centrado
-    // s="2" número 4 dec, fondo azul claro
-    // s="3" número 4 dec negrita (totales)
-    // s="4" # fila centrado
     $stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <numFmts count="1">
-    <numFmt numFmtId="164" formatCode="#,##0.0000"/>
-  </numFmts>
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.0000"/></numFmts>
   <fonts count="2">
     <font><sz val="10"/><name val="Calibri"/></font>
     <font><b/><sz val="10"/><name val="Calibri"/></font>
@@ -143,9 +120,7 @@ if ($export === 'excel') {
       <bottom style="thin"><color rgb="FF000000"/></bottom>
     </border>
   </borders>
-  <cellStyleXfs count="1">
-    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
-  </cellStyleXfs>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
   <cellXfs count="5">
     <xf numFmtId="0"   fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
     <xf numFmtId="0"   fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
@@ -156,43 +131,32 @@ if ($export === 'excel') {
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>';
 
-    // ── Sheet XML ──────────────────────────────────────────
     $xml  = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
     $xml .= '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
     $xml .= '<sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>';
-
-    // Anchos
     $xml .= '<cols>';
     foreach ($colDefs as $ci => $cd) {
         $n = $ci + 1;
         $xml .= '<col min="'.$n.'" max="'.$n.'" width="'.$cd[3].'" customWidth="1"/>';
     }
-    $xml .= '</cols>';
-
-    $xml .= '<sheetData>';
+    $xml .= '</cols><sheetData>';
 
     // Fila 1: grupos
     $xml .= '<row r="1" ht="20" customHeight="1">';
-    foreach ($colDefs as $ci => $cd) {
-        $xml .= '<c r="'.colLetter($ci+1).'1" t="s" s="1"><v>'.$si($cd[0]).'</v></c>';
-    }
+    foreach ($colDefs as $ci => $cd) $xml .= '<c r="'.colLetter($ci+1).'1" t="s" s="1"><v>'.$si($cd[0]).'</v></c>';
     $xml .= '</row>';
 
     // Fila 2: encabezados
     $xml .= '<row r="2" ht="28" customHeight="1">';
-    foreach ($colDefs as $ci => $cd) {
-        $xml .= '<c r="'.colLetter($ci+1).'2" t="s" s="1"><v>'.$si($cd[1]).'</v></c>';
-    }
+    foreach ($colDefs as $ci => $cd) $xml .= '<c r="'.colLetter($ci+1).'2" t="s" s="1"><v>'.$si($cd[1]).'</v></c>';
     $xml .= '</row>';
 
-    // Filas de datos
     $numFields  = ['e_cantidad','e_costo_u','e_total','s_cantidad','s_costo_u','s_total','saldo_cantidad','saldo_costo_u','saldo_total'];
     $numLetters = ['I','J','K','L','M','N','O','P','Q'];
 
     foreach ($registros as $ri => $r) {
         $rn    = $ri + 3;
         $fecha = $r['fecha'] ? date('d/m/Y', strtotime($r['fecha'])) : '';
-
         $xml .= '<row r="'.$rn.'">';
         $xml .= '<c r="A'.$rn.'" s="4"><v>'.($ri+1).'</v></c>';
         $xml .= '<c r="B'.$rn.'" t="s" s="0"><v>'.$si((string)($r['codigo']??'')).'</v></c>';
@@ -208,61 +172,50 @@ if ($export === 'excel') {
         $xml .= '</row>';
     }
 
-    // Fila totales
-    // Saldos: mostrar ÚLTIMO valor (no sumar) — el saldo es acumulativo
-    $ultimo = end($registros);
-    $tr  = count($registros) + 3;
+    
+    $ultimo   = end($registros);
+    $tr       = count($registros) + 3;
     $xml .= '<row r="'.$tr.'" ht="18" customHeight="1">';
     $xml .= '<c r="A'.$tr.'" t="s" s="3"><v>'.$si('TOTALES').'</v></c>';
     foreach (['B','C','D','E','F','G','H'] as $tl) {
         $xml .= '<c r="'.$tl.$tr.'" t="s" s="3"><v>'.$si('').'</v></c>';
     }
-    // I=E.Cant  J=E.CU  K=E.Total  L=S.Cant  M=S.CU  N=S.Total  O=Saldo.Cant  P=Saldo.CU  Q=Saldo.Total
     $totales = [
-        'I' => (float)array_sum(array_column($registros, 'e_cantidad')),   // SUMAR entradas
+        'I' => (float)array_sum(array_column($registros, 'e_cantidad')),  // SUMAR entradas
         'J' => 0.0,
-        'K' => (float)array_sum(array_column($registros, 'e_total')),      // SUMAR entradas total
-        'L' => (float)array_sum(array_column($registros, 's_cantidad')),   // SUMAR salidas
+        'K' => (float)array_sum(array_column($registros, 'e_total')),     // SUMAR entradas total
+        'L' => (float)array_sum(array_column($registros, 's_cantidad')),  // SUMAR salidas
         'M' => 0.0,
-        'N' => (float)array_sum(array_column($registros, 's_total')),      // SUMAR salidas total
-        'O' => (float)($ultimo['saldo_cantidad'] ?? 0),                    // ÚLTIMO saldo cantidad
-        'P' => (float)($ultimo['saldo_costo_u']  ?? 0),                    // ÚLTIMO saldo costo unit
-        'Q' => (float)($ultimo['saldo_total']    ?? 0),                    // ÚLTIMO saldo total
+        'N' => (float)array_sum(array_column($registros, 's_total')),     // SUMAR salidas total
+        //  la suma de todos los saldos intermedios
+        'O' => (float)($ultimo['saldo_cantidad'] ?? 0),
+        'P' => (float)($ultimo['saldo_costo_u']  ?? 0),
+        'Q' => (float)($ultimo['saldo_total']    ?? 0),
     ];
     foreach ($totales as $tl => $val) {
         $xml .= '<c r="'.$tl.$tr.'" s="3"><v>'.$val.'</v></c>';
     }
-    $xml .= '</row>';
+    $xml .= '</row></sheetData></worksheet>';
 
-    $xml .= '</sheetData></worksheet>';
-
-    // ── Shared Strings XML ─────────────────────────────────
     $sstXml  = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-    $sstXml .= '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
-    $sstXml .= ' count="'.count($sstArr).'" uniqueCount="'.count($sstArr).'">';
-    foreach ($sstArr as $v) {
-        $sstXml .= '<si><t xml:space="preserve">'.xe($v).'</t></si>';
-    }
+    $sstXml .= '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'.count($sstArr).'" uniqueCount="'.count($sstArr).'">';
+    foreach ($sstArr as $v) $sstXml .= '<si><t xml:space="preserve">'.xe($v).'</t></si>';
     $sstXml .= '</sst>';
 
-    // ── Archivos estructura ────────────────────────────────
     $workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
         .' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
         .'<sheets><sheet name="Kardex" sheetId="1" r:id="rId1"/></sheets></workbook>';
-
     $wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         .'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         .'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
         .'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
         .'<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
         .'</Relationships>';
-
     $rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         .'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         .'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
         .'</Relationships>';
-
     $ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         .'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         .'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -273,12 +226,9 @@ if ($export === 'excel') {
         .'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
         .'</Types>';
 
-    // ── Armar ZIP ──────────────────────────────────────────
     $tmpFile = tempnam(sys_get_temp_dir(), 'kxlsx_');
     $zip = new ZipArchive();
-    if ($zip->open($tmpFile, ZipArchive::OVERWRITE) !== true) {
-        die('Error: no se pudo crear el archivo temporal.');
-    }
+    if ($zip->open($tmpFile, ZipArchive::OVERWRITE) !== true) die('Error: no se pudo crear el archivo temporal.');
     $zip->addFromString('[Content_Types].xml',        $ct);
     $zip->addFromString('_rels/.rels',                $rels);
     $zip->addFromString('xl/workbook.xml',            $workbook);
@@ -288,12 +238,14 @@ if ($export === 'excel') {
     $zip->addFromString('xl/styles.xml',              $stylesXml);
     $zip->close();
 
-    $filename = 'kardex_reporte_' . date('Ymd_His') . '.xlsx';
+    $filename   = 'kardex_reporte_' . date('Ymd_His') . '.xlsx';
     $filtroDesc = [];
     if ($search_codigo)    $filtroDesc[] = "código=$search_codigo";
     if ($search_fecha_ini) $filtroDesc[] = "desde=$search_fecha_ini";
     if ($search_fecha_fin) $filtroDesc[] = "hasta=$search_fecha_fin";
     $filtroStr = $filtroDesc ? implode(', ', $filtroDesc) : 'sin filtro';
+
+    
     registrarLog($pdo, 'EXPORTAR', "Exportó reporte Excel", "$filtroStr · " . count($registros) . " registros", count($registros));
 
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -305,14 +257,13 @@ if ($export === 'excel') {
     exit;
 }
 
-// ============================================================
-// TOTALES Y RESUMEN PARA VISTA HTML
-// ============================================================
+
 $total_e_cant   = array_sum(array_column($registros, 'e_cantidad'));
 $total_e_tot    = array_sum(array_column($registros, 'e_total'));
 $total_s_cant   = array_sum(array_column($registros, 's_cantidad'));
 $total_s_tot    = array_sum(array_column($registros, 's_total'));
 $codigos_unicos = count(array_unique(array_column($registros, 'codigo')));
+
 
 $por_codigo = [];
 foreach ($registros as $r) {
@@ -322,10 +273,11 @@ foreach ($registros as $r) {
             'e_cant'=>0,'e_tot'=>0,'s_cant'=>0,'s_tot'=>0,'saldo_cant'=>0,'saldo_tot'=>0];
     }
     $por_codigo[$c]['movs']++;
-    $por_codigo[$c]['e_cant']    += $r['e_cantidad'];
-    $por_codigo[$c]['e_tot']     += $r['e_total'];
-    $por_codigo[$c]['s_cant']    += $r['s_cantidad'];
-    $por_codigo[$c]['s_tot']     += $r['s_total'];
+    $por_codigo[$c]['e_cant'] += $r['e_cantidad'];
+    $por_codigo[$c]['e_tot']  += $r['e_total'];
+    $por_codigo[$c]['s_cant'] += $r['s_cantidad'];
+    $por_codigo[$c]['s_tot']  += $r['s_total'];
+    
     $por_codigo[$c]['saldo_cant'] = $r['saldo_cantidad'];
     $por_codigo[$c]['saldo_tot']  = $r['saldo_total'];
 }
@@ -344,12 +296,10 @@ $fecha_hoy = date('d/m/Y H:i');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:var(--font-main);font-size:13px;min-height:100vh;}
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 10% 0%,rgba(79,158,255,.07) 0%,transparent 50%);pointer-events:none;z-index:0;}
-
 .toolbar{position:sticky;top:0;z-index:100;background:rgba(10,12,16,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
 .toolbar-title{font-size:14px;font-weight:700;}
 .toolbar-sub{font-size:11px;color:var(--text3);font-family:var(--font-mono);}
 .toolbar-right{display:flex;gap:8px;flex-wrap:wrap;}
-
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius2);font-family:var(--font-main);font-size:12px;font-weight:600;cursor:pointer;border:none;text-decoration:none;transition:all .15s;white-space:nowrap;}
 .btn-success{background:linear-gradient(135deg,var(--accent3),#00b87c);color:#0a0c10;}
 .btn-success:hover{transform:translateY(-1px);}
@@ -357,11 +307,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .btn-primary:hover{transform:translateY(-1px);}
 .btn-ghost{background:var(--bg3);color:var(--text2);border:1px solid var(--border2);}
 .btn-ghost:hover{background:var(--border);color:var(--text);}
-.btn-print{background:rgba(255,255,255,.06);color:var(--text2);border:1px solid var(--border2);}
-.btn-print:hover{background:rgba(255,255,255,.1);}
-
 .wrapper{position:relative;z-index:1;max-width:1600px;margin:0 auto;padding:24px 20px;}
-
 .filter-bar{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:20px;}
 .filter-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
 .fg{display:flex;flex-direction:column;gap:5px;flex:1;min-width:150px;}
@@ -369,7 +315,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .fg input{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius2);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:8px 11px;outline:none;transition:border-color .15s;}
 .fg input:focus{border-color:var(--accent);}
 .fg input::placeholder{color:var(--text3);}
-
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:24px;}
 .stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;position:relative;overflow:hidden;}
 .stat::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
@@ -380,7 +325,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .stat-l{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
 .stat-v{font-size:20px;font-weight:800;font-family:var(--font-mono);}
 .stat-v.blue{color:var(--accent);}.stat-v.green{color:var(--accent3);}.stat-v.red{color:var(--danger);}.stat-v.yellow{color:var(--warning);}
-
 .section-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;font-family:var(--font-mono);}
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:28px;}
 .summary-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;transition:border-color .15s;}
@@ -394,7 +338,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .sc-val-l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;}
 .sc-val-v{font-size:12px;font-weight:700;font-family:var(--font-mono);}
 .sc-val-v.green{color:var(--accent3);}.sc-val-v.red{color:var(--danger);}.sc-val-v.yellow{color:var(--warning);}
-
 .table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px;}
 .table-head-bar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;}
 .table-head-bar span{font-size:12px;color:var(--text2);}
@@ -429,18 +372,8 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
 .empty{text-align:center;padding:50px;color:var(--text3);}
 .empty-icon{font-size:40px;margin-bottom:14px;opacity:.4;}
 .report-footer{text-align:center;padding:16px;font-size:11px;color:var(--text3);font-family:var(--font-mono);border-top:1px solid var(--border);margin-top:20px;}
-
 @media print{.toolbar,.filter-bar{display:none!important;}body{background:#fff;color:#000;}table{font-size:9px;}.table-wrap{border:1px solid #ccc;}}
-@media(max-width:768px){
-  .wrapper{padding:16px 12px 80px;}
-  .stats{grid-template-columns:1fr 1fr;gap:8px;}
-  .summary-grid{grid-template-columns:1fr;}
-  .toolbar{flex-direction:column;align-items:flex-start;gap:8px;padding:10px 16px;}
-  .toolbar-right{width:100%;flex-wrap:wrap;}
-  .toolbar-right .btn{flex:1;justify-content:center;font-size:11px;padding:7px 10px;}
-  .filter-row{flex-direction:column;}
-  .tscroll{overflow-x:auto;}
-}
+@media(max-width:768px){.wrapper{padding:16px 12px 80px;}.stats{grid-template-columns:1fr 1fr;gap:8px;}.summary-grid{grid-template-columns:1fr;}.toolbar{flex-direction:column;align-items:flex-start;gap:8px;padding:10px 16px;}.toolbar-right{width:100%;flex-wrap:wrap;}.toolbar-right .btn{flex:1;justify-content:center;font-size:11px;padding:7px 10px;}.filter-row{flex-direction:column;}.tscroll{overflow-x:auto;}}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#111318;border-top:1px solid #232731;z-index:100;padding:8px 0;}
 .bottom-nav-inner{display:flex;justify-content:space-around;}
 .nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;text-decoration:none;opacity:.5;padding:4px 12px;}
@@ -452,21 +385,18 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
 </style>
 </head>
 <body>
-
 <div class="toolbar">
   <div>
     <div class="toolbar-title">📄 Reporte Kardex</div>
     <div class="toolbar-sub">Generado: <?= $fecha_hoy ?> · <?= number_format(count($registros)) ?> registros</div>
   </div>
   <div class="toolbar-right">
-    <a href="<?= '?'.http_build_query(array_merge($_GET,['export'=>'excel'])) ?>" class="btn btn-success">⬇ Exportar Excel (.xlsx)</a>
-    <button onclick="window.print()" class="btn btn-print">🖨 Imprimir</button>
+    <a href="<?= '?'.http_build_query(array_merge($_GET,['export'=>'excel'])) ?>" class="btn btn-success">📥 Exportar Excel (.xlsx)</a>
     <a href="index.php" class="btn btn-ghost">← Volver</a>
   </div>
 </div>
 
 <div class="wrapper">
-
   <div class="filter-bar">
     <form method="GET">
       <div class="filter-row">
@@ -489,7 +419,7 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
   </div>
 
   <?php if (!empty($por_codigo)): ?>
-  <div class="section-title">📊 Resumen por producto</div>
+  <div class="section-title">📦 Resumen por producto</div>
   <div class="summary-grid">
     <?php foreach ($por_codigo as $cod => $dat): ?>
     <div class="summary-card">
@@ -501,6 +431,7 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
       <div class="sc-vals">
         <div class="sc-val"><div class="sc-val-l">Entradas</div><div class="sc-val-v green"><?= number_format($dat['e_cant'],3) ?></div></div>
         <div class="sc-val"><div class="sc-val-l">Salidas</div><div class="sc-val-v red"><?= number_format($dat['s_cant'],3) ?></div></div>
+        
         <div class="sc-val"><div class="sc-val-l">Saldo</div><div class="sc-val-v yellow"><?= number_format($dat['saldo_cant'],3) ?></div></div>
       </div>
     </div>
@@ -571,8 +502,10 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
           <?php endforeach; ?>
         <?php endif; ?>
         </tbody>
-        <?php if (!empty($registros)): ?>
-        <?php $ultimo_reg = end($registros); ?>
+        <?php if (!empty($registros)):
+        
+          $ultimo_reg = end($registros);
+        ?>
         <tfoot>
           <tr>
             <td colspan="8" class="tf-label" style="text-align:right;padding-right:16px">TOTALES →</td>
@@ -582,6 +515,7 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
             <td class="td-s" style="font-weight:700"><?= number_format($total_s_cant,3) ?></td>
             <td></td>
             <td class="td-s" style="font-weight:700"><?= number_format($total_s_tot,3) ?></td>
+            <!-- ✅ Saldo final = último saldo calculado, NO la suma de todos los saldos -->
             <td class="td-b" style="font-weight:700"><?= number_format($ultimo_reg['saldo_cantidad'],3) ?></td>
             <td class="td-b" style="font-weight:700"><?= number_format($ultimo_reg['saldo_costo_u'],4) ?></td>
             <td class="td-b" style="font-weight:700"><?= number_format($ultimo_reg['saldo_total'],3) ?></td>
@@ -602,12 +536,13 @@ tfoot td{padding:10px;font-weight:700;font-size:11.5px;font-family:var(--font-mo
     <?php endif; ?>
   </div>
 </div>
+
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
-    <a href="index.php" class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
+    <a href="index.php"    class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
     <a href="importar.php" class="nav-item"><span class="nav-icon">⬆</span><span class="nav-label">Importar</span></a>
-    <a href="reporte.php" class="nav-item active"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
-    <a href="log.php" class="nav-item"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
+    <a href="reporte.php"  class="nav-item active"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
+    <a href="log.php"      class="nav-item"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
   </div>
 </nav>
 </body>

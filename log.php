@@ -1,7 +1,7 @@
 <?php
-// ============================================================
-// CONFIGURACIÓN DE BASE DE DATOS
-// ============================================================
+
+date_default_timezone_set('America/Lima'); 
+
 $host   = 'localhost';
 $dbname = 'dbasescon';
 $user   = 'root';
@@ -12,27 +12,21 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     die('Error de conexión: ' . $e->getMessage());
-date_default_timezone_set('America/Lima');
-
 }
 
-// ============================================================
-// ACCIONES (antes de cualquier output HTML)
-// ============================================================
+
 if (isset($_GET['action']) && $_GET['action'] === 'clear_log') {
     $pdo->exec("TRUNCATE TABLE kardex_log");
     header("Location: log.php?cleared=1");
     exit;
 }
 
-// ============================================================
-// FILTROS
-// ============================================================
+
 $filter_accion    = trim($_GET['accion']    ?? '');
 $filter_fecha_ini = trim($_GET['fecha_ini'] ?? '');
 $filter_fecha_fin = trim($_GET['fecha_fin'] ?? '');
-$page  = max(1, (int)($_GET['page'] ?? 1));
-$limit = 50;
+$page   = max(1, (int)($_GET['page'] ?? 1));
+$limit  = 50;
 $offset = ($page - 1) * $limit;
 
 $where = []; $params = [];
@@ -50,9 +44,9 @@ if ($filter_fecha_fin) {
 }
 $whereSQL = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$total = $pdo->prepare("SELECT COUNT(*) FROM kardex_log $whereSQL");
-$total->execute($params);
-$total = (int)$total->fetchColumn();
+$stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM kardex_log $whereSQL");
+$stmtTotal->execute($params);
+$total = (int)$stmtTotal->fetchColumn();
 $totalPages = max(1, ceil($total / $limit));
 
 $stmt = $pdo->prepare("SELECT * FROM kardex_log $whereSQL ORDER BY fecha DESC LIMIT :lim OFFSET :off");
@@ -66,17 +60,17 @@ $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stats = $pdo->query("
     SELECT
         COUNT(*) as total_acciones,
-        SUM(CASE WHEN accion='IMPORTAR'   THEN 1 ELSE 0 END) as importaciones,
-        SUM(CASE WHEN accion='EXPORTAR'   THEN 1 ELSE 0 END) as exportaciones,
+        SUM(CASE WHEN accion='IMPORTAR' THEN 1 ELSE 0 END) as importaciones,
+        SUM(CASE WHEN accion='EXPORTAR' THEN 1 ELSE 0 END) as exportaciones,
         SUM(CASE WHEN accion='ELIMINAR' THEN 1 ELSE 0 END) as eliminaciones,
-        SUM(CASE WHEN accion='IMPORTAR'   THEN registros ELSE 0 END) as total_importados
+        SUM(CASE WHEN accion='IMPORTAR' THEN registros ELSE 0 END) as total_importados
     FROM kardex_log
 ")->fetch(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8"
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Log de Actividad — Kardex</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
@@ -86,22 +80,16 @@ $stats = $pdo->query("
 body{background:var(--bg);color:var(--text);font-family:var(--font-main);font-size:14px;min-height:100vh;}
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 20% 10%,rgba(79,158,255,.06) 0%,transparent 60%);pointer-events:none;z-index:0;}
 .wrapper{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:32px 20px;}
-
-/* HEADER */
 .header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--border);}
 .header-brand{display:flex;align-items:center;gap:14px;}
 .header-icon{width:44px;height:44px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 0 20px rgba(79,158,255,.3);}
 .header-title{font-size:22px;font-weight:800;letter-spacing:-.5px;}
 .header-sub{font-size:12px;color:var(--text2);font-family:var(--font-mono);margin-top:2px;}
-
-/* BOTONES */
 .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:var(--radius2);font-family:var(--font-main);font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .18s;text-decoration:none;white-space:nowrap;}
 .btn-ghost{background:var(--bg3);color:var(--text2);border:1px solid var(--border2);}
 .btn-ghost:hover{background:var(--border);color:var(--text);}
 .btn-danger{background:rgba(255,77,106,.1);color:var(--danger);border:1px solid rgba(255,77,106,.2);}
 .btn-danger:hover{background:rgba(255,77,106,.2);}
-
-/* STATS */
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;}
 .stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;position:relative;overflow:hidden;}
 .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
@@ -113,10 +101,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
 .stat-value{font-size:22px;font-weight:800;font-family:var(--font-mono);}
 .stat-value.blue{color:var(--accent);}.stat-value.green{color:var(--accent3);}
-.stat-value.yellow{color:var(--warning);}.stat-value.red{color:var(--danger);}
-.stat-value.purple{color:var(--accent2);}
-
-/* FILTROS */
+.stat-value.yellow{color:var(--warning);}.stat-value.red{color:var(--danger);}.stat-value.purple{color:var(--accent2);}
 .filter-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:20px;}
 .filter-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;font-family:var(--font-mono);}
 .filter-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
@@ -124,8 +109,6 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .fg label{font-size:12px;color:var(--text2);}
 .fg select,.fg input{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius2);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:8px 11px;outline:none;transition:border-color .15s;}
 .fg select:focus,.fg input:focus{border-color:var(--accent);}
-
-/* TABLA */
 .table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
 .table-topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;}
 .table-topbar span{font-size:12px;color:var(--text2);}
@@ -141,25 +124,17 @@ td.td-desc{font-family:var(--font-main);font-size:12.5px;color:var(--text);}
 td.td-det{font-size:11px;color:var(--text3);}
 td.td-num{text-align:right;color:var(--accent);font-weight:600;}
 td.td-fecha{white-space:nowrap;}
-
-/* BADGES ACCION */
 .badge-accion{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;font-family:var(--font-main);white-space:nowrap;}
-.badge-importar {background:rgba(79,158,255,.12); color:var(--accent);}
-.badge-exportar {background:rgba(0,229,176,.12);  color:var(--accent3);}
-.badge-eliminar {background:rgba(255,77,106,.12);  color:var(--danger);}
-
-
-/* PAGINACIÓN */
+.badge-importar{background:rgba(79,158,255,.12);color:var(--accent);}
+.badge-exportar{background:rgba(0,229,176,.12);color:var(--accent3);}
+.badge-eliminar{background:rgba(255,77,106,.12);color:var(--danger);}
 .pagination{display:flex;align-items:center;justify-content:center;gap:6px;padding:16px;border-top:1px solid var(--border);flex-wrap:wrap;}
 .page-btn{width:34px;height:34px;border-radius:var(--radius2);background:var(--bg3);border:1px solid var(--border2);color:var(--text2);font-family:var(--font-mono);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none;transition:all .15s;}
 .page-btn:hover{background:var(--border);color:var(--text);}
 .page-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;}
 .page-btn.disabled{opacity:.3;pointer-events:none;}
-
 .empty{text-align:center;padding:60px;color:var(--text3);}
 .empty-icon{font-size:40px;margin-bottom:14px;opacity:.4;}
-
-/* Modal limpiar log */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
 .modal-overlay.show{opacity:1;pointer-events:all;}
 .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);padding:32px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.6);transform:translateY(20px);transition:transform .2s;}
@@ -169,15 +144,7 @@ td.td-fecha{white-space:nowrap;}
 .modal-sub{font-size:13px;color:var(--text2);text-align:center;margin-bottom:24px;line-height:1.6;}
 .modal-actions{display:flex;gap:10px;}
 .modal-actions .btn{flex:1;justify-content:center;padding:11px;}
-
-@media(max-width:768px){
-  .wrapper{padding:12px 12px 80px;}
-  .stats{grid-template-columns:1fr 1fr;gap:8px;}
-  .header{flex-direction:column;align-items:flex-start;}
-  .filter-row{flex-direction:column;}
-  .tscroll{overflow-x:auto;}
-  th,td{padding:8px 10px;font-size:11px;}
-}
+@media(max-width:768px){.wrapper{padding:12px 12px 80px;}.stats{grid-template-columns:1fr 1fr;gap:8px;}.header{flex-direction:column;align-items:flex-start;}.filter-row{flex-direction:column;}.tscroll{overflow-x:auto;}th,td{padding:8px 10px;font-size:11px;}}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#111318;border-top:1px solid #232731;z-index:100;padding:8px 0;}
 .bottom-nav-inner{display:flex;justify-content:space-around;}
 .nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;text-decoration:none;opacity:.5;padding:4px 12px;}
@@ -189,10 +156,7 @@ td.td-fecha{white-space:nowrap;}
 </style>
 </head>
 <body>
-
 <div class="wrapper">
-
-  <!-- HEADER -->
   <div class="header">
     <div class="header-brand">
       <div class="header-icon">📋</div>
@@ -209,42 +173,25 @@ td.td-fecha{white-space:nowrap;}
     </div>
   </div>
 
-  <!-- STATS -->
   <div class="stats">
-    <div class="stat-card">
-      <div class="stat-label">Total Acciones</div>
-      <div class="stat-value blue"><?= number_format($stats['total_acciones']) ?></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Importaciones</div>
-      <div class="stat-value green"><?= number_format($stats['importaciones']) ?></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Exportaciones</div>
-      <div class="stat-value yellow"><?= number_format($stats['exportaciones']) ?></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Eliminaciones</div>
-      <div class="stat-value red"><?= number_format($stats['eliminaciones']) ?></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Registros Importados</div>
-      <div class="stat-value purple"><?= number_format($stats['total_importados']) ?></div>
-    </div>
+    <div class="stat-card"><div class="stat-label">Total Acciones</div><div class="stat-value blue"><?= number_format($stats['total_acciones']) ?></div></div>
+    <div class="stat-card"><div class="stat-label">Importaciones</div><div class="stat-value green"><?= number_format($stats['importaciones']) ?></div></div>
+    <div class="stat-card"><div class="stat-label">Exportaciones</div><div class="stat-value yellow"><?= number_format($stats['exportaciones']) ?></div></div>
+    <div class="stat-card"><div class="stat-label">Eliminaciones</div><div class="stat-value red"><?= number_format($stats['eliminaciones']) ?></div></div>
+    <div class="stat-card"><div class="stat-label">Registros Importados</div><div class="stat-value purple"><?= number_format($stats['total_importados']) ?></div></div>
   </div>
 
-  <!-- FILTROS -->
   <div class="filter-panel">
-    <div class="filter-title"> Filtrar actividad</div>
+    <div class="filter-title">🔍 Filtrar actividad</div>
     <form method="GET">
       <div class="filter-row">
         <div class="fg">
           <label>Tipo de acción</label>
           <select name="accion">
             <option value="">Todas las acciones</option>
-            <option value="IMPORTAR" <?= $filter_accion==='IMPORTAR' ?'selected':'' ?>>⬆ Importar</option>
-            <option value="EXPORTAR" <?= $filter_accion==='EXPORTAR' ?'selected':'' ?>>⬇ Exportar</option>
-            <option value="ELIMINAR" <?= $filter_accion==='ELIMINAR' ?'selected':'' ?>>🗑 Eliminar</option>
+            <option value="IMPORTAR" <?= $filter_accion==='IMPORTAR'?'selected':'' ?>>⬆ Importar</option>
+            <option value="EXPORTAR" <?= $filter_accion==='EXPORTAR'?'selected':'' ?>>⬇ Exportar</option>
+            <option value="ELIMINAR" <?= $filter_accion==='ELIMINAR'?'selected':'' ?>>🗑 Eliminar</option>
           </select>
         </div>
         <div class="fg">
@@ -263,7 +210,6 @@ td.td-fecha{white-space:nowrap;}
     </form>
   </div>
 
-  <!-- TABLA -->
   <div class="table-wrap">
     <div class="table-topbar">
       <span><?= number_format($total) ?> registros<?= $filter_accion||$filter_fecha_ini||$filter_fecha_fin ? ' <span style="color:var(--accent)">· filtrado</span>' : '' ?></span>
@@ -304,28 +250,22 @@ td.td-fecha{white-space:nowrap;}
               default    => '•',
             };
             $fechaFmt = date('d/m/Y H:i:s', strtotime($log['fecha']));
-            $hace = '';
             $diff = time() - strtotime($log['fecha']);
-            if ($diff < 60)         $hace = 'hace ' . $diff . 's';
-            elseif ($diff < 3600)   $hace = 'hace ' . floor($diff/60) . 'min';
-            elseif ($diff < 86400)  $hace = 'hace ' . floor($diff/3600) . 'h';
-            elseif ($diff < 604800) $hace = 'hace ' . floor($diff/86400) . 'd';
+            $hace = '';
+            if      ($diff < 60)    $hace = 'hace ' . $diff . 's';
+            elseif  ($diff < 3600)  $hace = 'hace ' . floor($diff/60) . 'min';
+            elseif  ($diff < 86400) $hace = 'hace ' . floor($diff/3600) . 'h';
+            elseif  ($diff < 604800)$hace = 'hace ' . floor($diff/86400) . 'd';
           ?>
           <tr>
             <td style="color:var(--text3)"><?= $offset + $i + 1 ?></td>
-            <td>
-              <span class="badge-accion <?= $badgeClass ?>">
-                <?= $icono ?> <?= $log['accion'] ?>
-              </span>
-            </td>
+            <td><span class="badge-accion <?= $badgeClass ?>"><?= $icono ?> <?= $log['accion'] ?></span></td>
             <td class="td-desc"><?= htmlspecialchars($log['descripcion']) ?></td>
             <td class="td-det"><?= htmlspecialchars($log['detalle'] ?? '—') ?></td>
             <td class="td-num"><?= $log['registros'] > 0 ? number_format($log['registros']) : '—' ?></td>
             <td class="td-fecha">
               <div style="color:var(--text2)"><?= $fechaFmt ?></div>
-              <?php if ($hace): ?>
-              <div style="font-size:10px;color:var(--text3);margin-top:2px"><?= $hace ?></div>
-              <?php endif; ?>
+              <?php if ($hace): ?><div style="font-size:10px;color:var(--text3);margin-top:2px"><?= $hace ?></div><?php endif; ?>
             </td>
           </tr>
           <?php endforeach; ?>
@@ -334,7 +274,6 @@ td.td-fecha{white-space:nowrap;}
       </table>
     </div>
 
-    <!-- PAGINACIÓN -->
     <?php if ($totalPages > 1): ?>
     <div class="pagination">
       <a href="?<?= http_build_query(array_merge($_GET,['page'=>1])) ?>" class="page-btn <?= $page<=1?'disabled':'' ?>">«</a>
@@ -347,10 +286,8 @@ td.td-fecha{white-space:nowrap;}
     </div>
     <?php endif; ?>
   </div>
-
 </div>
 
-<!-- MODAL LIMPIAR LOG -->
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <div class="modal-icon">⚠️</div>
@@ -365,10 +302,10 @@ td.td-fecha{white-space:nowrap;}
 
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
-    <a href="index.php" class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
+    <a href="index.php"    class="nav-item"><span class="nav-icon">📦</span><span class="nav-label">Kardex</span></a>
     <a href="importar.php" class="nav-item"><span class="nav-icon">⬆</span><span class="nav-label">Importar</span></a>
-    <a href="reporte.php" class="nav-item"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
-    <a href="log.php" class="nav-item active"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
+    <a href="reporte.php"  class="nav-item"><span class="nav-icon">📄</span><span class="nav-label">Reporte</span></a>
+    <a href="log.php"      class="nav-item active"><span class="nav-icon">📋</span><span class="nav-label">Log</span></a>
   </div>
 </nav>
 
@@ -377,7 +314,6 @@ document.getElementById('modalOverlay').addEventListener('click', function(e) {
   if (e.target === this) this.classList.remove('show');
 });
 <?php if (isset($_GET['cleared'])): ?>
-// Toast simple
 const d = document.createElement('div');
 d.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#111318;border:1px solid #2e3340;border-left:3px solid #00e5b0;border-radius:10px;padding:14px 20px;color:#e8eaf0;font-family:Syne,sans-serif;font-size:13px;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.5)';
 d.textContent = '✅ Log limpiado correctamente';
